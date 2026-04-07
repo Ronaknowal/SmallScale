@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Environment variables
+.env
+
+# Data (large binary files)
+data/processed/
+data/raw/
+*.bin
+
+# Model checkpoints
+experiments/
+*.pt
+*.pth
+
+# Tokenizer artifacts (regenerable)
+data/tokenizer/
+
+# Weights & Biases
+wandb/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# uv
+.python-version
