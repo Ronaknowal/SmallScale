@@ -20,7 +20,7 @@ model:
 data:
   data_dir: ./data/processed
   seq_len: 1024
-  batch_size: 64            # doubled from 32 — A40 48GB can handle this
+  batch_size: 128
   num_workers: 4
 
 training:
@@ -33,9 +33,9 @@ training:
   grad_clip: 1.0
   warmup_steps: 500
   lr_schedule: cosine
-  grad_accum_steps: 2       # halved — same effective batch (64*2=128)
+  grad_accum_steps: 1       # no accum needed — H100 80GB fits large batches
   log_interval: 10
   eval_interval: 1000       # less frequent eval
   save_interval: 5000
   dtype: bfloat16
-  compile: true
+  compile: false             # disable — torch.compile autotuning eats ~8GB extra VRAM
