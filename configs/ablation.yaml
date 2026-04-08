@@ -1,5 +1,5 @@
 # Ablation config: same architecture as base, optimized for faster runs.
-# Used for screening experiments — 10K steps is enough to rank configs.
+# Uses the same batch settings that worked on A40 — H100 runs it ~2-3x faster.
 
 name: ablation
 
@@ -20,7 +20,7 @@ model:
 data:
   data_dir: ./data/processed
   seq_len: 1024
-  batch_size: 128
+  batch_size: 32
   num_workers: 4
 
 training:
@@ -33,9 +33,9 @@ training:
   grad_clip: 1.0
   warmup_steps: 500
   lr_schedule: cosine
-  grad_accum_steps: 1       # no accum needed with flash attention + H100
+  grad_accum_steps: 4
   log_interval: 10
-  eval_interval: 1000       # less frequent eval
+  eval_interval: 1000
   save_interval: 5000
   dtype: bfloat16
   compile: true
