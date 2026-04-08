@@ -84,22 +84,25 @@ class Attention(nn.Module):
         k = self._repeat_kv(k)  # (B, n_heads, T, head_dim)
         v = self._repeat_kv(v)
 
-        # Attention scores
-        attn = (q @ k.transpose(-2, -1)) * self.scale  # (B, n_heads, T, T)
-
-        # Apply ALiBi bias if using ALiBi
+        # Use Flash Attention via PyTorch's SDPA — never materializes (B, H, T, T) matrix.
+        # Manual path needed only for ALiBi (which requires a custom attention bias).
         if self.pos_encoding == "alibi":
+            # ALiBi requires adding bias to attention scores — use manual path
+            attn = (q @ k.transpose(-2, -1)) * self.scale
             alibi_bias = self.alibi(T)  # (n_heads, T, T)
             attn = attn + alibi_bias.unsqueeze(0)
-
-        # Causal mask
-        if mask is not None:
-            attn = attn.masked_fill(mask == 0, float("-inf"))
-
-        attn = F.softmax(attn, dim=-1)
-        attn = self.attn_dropout(attn)
-
-        # Weighted sum
-        out = attn @ v  # (B, n_heads, T, head_dim)
+            if mask is not None:
+                attn = attn.masked_fill(mask == 0, float("-inf"))
+            attn = F.softmax(attn, dim=-1)
+            attn = self.attn_dropout(attn)
+            out = attn @ v
+        else:
+            # Flash Attention path — O(T) memory instead of O(T^2)
+            out = F.scaled_dot_product_attention(
+                q, k, v,
+                attn_mask=None,       # use is_causal flag instead
+                dropout_p=self.attn_dropout.p if self.training else 0.0,
+                is_causal=True,
+            )
         out = out.transpose(1, 2).contiguous().view(B, T, -1)
         return self.o_proj(out)
