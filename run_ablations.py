@@ -85,6 +85,8 @@ def main():
                         choices=list(ABLATION_SUITES.keys()),
                         help="Which ablation suite to run")
     parser.add_argument("--base_config", type=str, default="configs/base.yaml")
+    parser.add_argument("--max_steps", type=int, default=None,
+                        help="Override max_steps for all experiments (e.g. 10000 for quick screening)")
     parser.add_argument("--dry_run", action="store_true", help="Print commands without running")
     args = parser.parse_args()
 
@@ -92,6 +94,8 @@ def main():
     print(f"Ablation suite: {args.suite} ({len(experiments)} experiments)")
 
     for name, overrides in experiments:
+        if args.max_steps is not None:
+            overrides = {**overrides, "training.max_steps": args.max_steps}
         if args.dry_run:
             print(f"  [DRY RUN] {name}: {overrides}")
         else:
