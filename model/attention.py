@@ -84,23 +84,26 @@ class Attention(nn.Module):
         k = self._repeat_kv(k)  # (B, n_heads, T, head_dim)
         v = self._repeat_kv(v)
 
-        # Use Flash Attention via PyTorch's SDPA — never materializes (B, H, T, T) matrix.
-        # Manual path needed only for ALiBi (which requires a custom attention bias).
+        # Use PyTorch's SDPA for all paths — memory-efficient and fused.
         if self.pos_encoding == "alibi":
-            # ALiBi requires adding bias to attention scores — use manual path
-            attn = (q @ k.transpose(-2, -1)) * self.scale
+            # Build combined ALiBi + causal mask as an additive bias
             alibi_bias = self.alibi(T)  # (n_heads, T, T)
-            attn = attn + alibi_bias.unsqueeze(0)
-            if mask is not None:
-                attn = attn.masked_fill(mask == 0, float("-inf"))
-            attn = F.softmax(attn, dim=-1)
-            attn = self.attn_dropout(attn)
-            out = attn @ v
+            # Add causal mask: upper triangle = -inf
+            causal = torch.triu(
+                torch.full((T, T), float("-inf"), device=q.device, dtype=q.dtype), diagonal=1
+            )
+            attn_mask = alibi_bias.to(dtype=q.dtype) + causal  # (n_heads, T, T)
+            out = F.scaled_dot_product_attention(
+                q, k, v,
+                attn_mask=attn_mask,
+                dropout_p=self.attn_dropout.p if self.training else 0.0,
+                is_causal=False,  # causal already baked into attn_mask
+            )
         else:
             # Flash Attention path — O(T) memory instead of O(T^2)
             out = F.scaled_dot_product_attention(
                 q, k, v,
-                attn_mask=None,       # use is_causal flag instead
+                attn_mask=None,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
                 is_causal=True,
             )

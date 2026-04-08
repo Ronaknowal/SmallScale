@@ -12,6 +12,7 @@ Usage:
 import argparse
 import subprocess
 import sys
+from pathlib import Path
 from typing import List, Dict
 
 
@@ -88,18 +89,28 @@ def main():
     parser.add_argument("--max_steps", type=int, default=None,
                         help="Override max_steps for all experiments (e.g. 10000 for quick screening)")
     parser.add_argument("--dry_run", action="store_true", help="Print commands without running")
+    parser.add_argument("--resume", action="store_true",
+                        help="Skip experiments that already have a final.pt checkpoint")
     args = parser.parse_args()
 
     experiments = ABLATION_SUITES[args.suite]
     print(f"Ablation suite: {args.suite} ({len(experiments)} experiments)")
 
+    skipped = 0
     for name, overrides in experiments:
         if args.max_steps is not None:
             overrides = {**overrides, "training.max_steps": args.max_steps}
+        if args.resume and (Path("experiments") / name / "checkpoints" / "final.pt").exists():
+            print(f"  [SKIP] {name}: already completed (final.pt exists)")
+            skipped += 1
+            continue
         if args.dry_run:
             print(f"  [DRY RUN] {name}: {overrides}")
         else:
             run_experiment(name, overrides, args.base_config)
+
+    if skipped:
+        print(f"\nSkipped {skipped} already-completed experiments.")
 
     print(f"\nAll experiments complete. Run analysis:")
     print(f"  python -m evaluation.analysis --exp_dir ./experiments/")
