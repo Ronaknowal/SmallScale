@@ -38,4 +38,4 @@ training:
   eval_interval: 1000       # less frequent eval
   save_interval: 5000
   dtype: bfloat16
-  compile: true
+  compile: false
