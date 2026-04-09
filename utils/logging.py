@@ -12,9 +12,8 @@ class ExperimentLogger:
         self.exp_dir = Path(exp_dir)
         self.exp_dir.mkdir(parents=True, exist_ok=True)
         self.log_path = self.exp_dir / "metrics.csv"
-        self.writer = None
-        self.file = None
-        self.fieldnames = None
+        self.rows = []       # buffer all rows, write at close with full fieldnames
+        self.fieldnames = set()
         self.use_wandb = use_wandb
         self.start_time = time.time()
 
@@ -30,14 +29,8 @@ class ExperimentLogger:
         metrics["step"] = step
         metrics["elapsed_s"] = round(time.time() - self.start_time, 1)
 
-        # CSV logging
-        if self.writer is None:
-            self.fieldnames = list(metrics.keys())
-            self.file = open(self.log_path, "w", newline="")
-            self.writer = csv.DictWriter(self.file, fieldnames=self.fieldnames)
-            self.writer.writeheader()
-        self.writer.writerow({k: metrics.get(k, "") for k in self.fieldnames})
-        self.file.flush()
+        self.fieldnames.update(metrics.keys())
+        self.rows.append(metrics)
 
         # W&B logging
         if self.use_wandb:
@@ -49,8 +42,14 @@ class ExperimentLogger:
             json.dump(config, f, indent=2)
 
     def close(self):
-        if self.file:
-            self.file.close()
+        # Write all rows at once so every column is present in every row
+        if self.rows:
+            ordered = sorted(self.fieldnames, key=lambda k: (k != "step", k != "elapsed_s", k))
+            with open(self.log_path, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=ordered)
+                writer.writeheader()
+                for row in self.rows:
+                    writer.writerow({k: row.get(k, "") for k in ordered})
         if self.use_wandb:
             import wandb
             wandb.finish()

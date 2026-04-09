@@ -1,6 +1,7 @@
-"""Analysis tools: loss curve plotting, ablation comparison tables.
+"""Analysis tools: per-suite loss curves, ranked ablation tables, best/worst summary.
 
-This produces the figures and tables you'd put in a research write-up.
+Produces publication-ready figures grouped by ablation suite, plus a
+ranked summary table showing which config won each comparison.
 
 Usage:
     python -m evaluation.analysis --exp_dir ./experiments/
@@ -8,14 +9,31 @@ Usage:
 
 import csv
 import argparse
+import math
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path
-from typing import List, Dict
+from typing import List, Dict, Tuple, Optional
+
+# Map experiment name prefixes to ablation suites for grouped plotting
+SUITES = {
+    "Positional Encoding": ["pos_rope", "pos_alibi", "pos_learned"],
+    "Attention Mechanism": ["attn_mha", "attn_gqa4", "attn_gqa2", "attn_mqa"],
+    "Activation Function": ["act_swiglu", "act_gelu"],
+    "Normalization": ["norm_pre_rmsnorm", "norm_pre_layernorm", "norm_post_rmsnorm", "norm_post_layernorm"],
+    "Warmup Steps": ["warmup_100", "warmup_500", "warmup_1000", "warmup_2000"],
+    "Learning Rate": ["lr_1e4", "lr_3e4", "lr_6e4", "lr_1e3"],
+}
+
+# Colors for cleaner plots
+COLORS = [
+    "#e6194b", "#3cb44b", "#4363d8", "#f58231",
+    "#911eb4", "#42d4f4", "#f032e6", "#bfef45",
+]
 
 
-def load_metrics(exp_dir: str) -> Dict[str, List[float]]:
-    """Load metrics CSV into dict of lists."""
+def load_metrics(exp_dir: str) -> Dict[str, List]:
+    """Load metrics CSV into dict of lists, handling sparse rows."""
     path = Path(exp_dir) / "metrics.csv"
     if not path.exists():
         return {}
@@ -26,89 +44,163 @@ def load_metrics(exp_dir: str) -> Dict[str, List[float]]:
             for k, v in row.items():
                 if k not in data:
                     data[k] = []
-                try:
-                    data[k].append(float(v))
-                except (ValueError, TypeError):
-                    data[k].append(v)
+                if v == "":
+                    data[k].append(None)
+                else:
+                    try:
+                        data[k].append(float(v))
+                    except (ValueError, TypeError):
+                        data[k].append(v)
     return data
 
 
-def plot_loss_curves(exp_dirs: List[str], labels: List[str], output_path: str):
-    """Plot training loss curves for multiple experiments on one figure."""
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+def get_metric_pairs(metrics: Dict, x_key: str, y_key: str) -> Tuple[List[float], List[float]]:
+    """Extract aligned (x, y) pairs where both are valid floats."""
+    xs = metrics.get(x_key, [])
+    ys = metrics.get(y_key, [])
+    pairs = [(x, y) for x, y in zip(xs, ys)
+             if isinstance(x, float) and isinstance(y, float) and x is not None and y is not None]
+    if not pairs:
+        return [], []
+    return zip(*pairs)
 
-    for exp_dir, label in zip(exp_dirs, labels):
+
+def plot_suite(suite_name: str, exp_names: List[str], base_dir: Path, output_path: Path):
+    """Plot training + validation loss for one ablation suite."""
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle(f"Ablation: {suite_name}", fontsize=14, fontweight="bold")
+
+    has_val = False
+    for i, name in enumerate(exp_names):
+        exp_dir = str(base_dir / name)
         metrics = load_metrics(exp_dir)
         if not metrics:
             continue
-
-        steps = [s for s in metrics.get("step", []) if isinstance(s, float)]
+        color = COLORS[i % len(COLORS)]
 
         # Training loss
-        train_loss = metrics.get("train/loss", [])
-        valid_pairs = [(s, l) for s, l in zip(steps, train_loss) if isinstance(l, float) and l > 0]
-        if valid_pairs:
-            s, l = zip(*valid_pairs)
-            ax1.plot(s, l, label=label, alpha=0.8)
+        steps, losses = get_metric_pairs(metrics, "step", "train/loss")
+        if steps:
+            ax1.plot(steps, losses, label=name, color=color, alpha=0.85, linewidth=1.5)
 
         # Validation loss
-        val_loss = metrics.get("val/loss", [])
-        valid_pairs = [(s, l) for s, l in zip(steps, val_loss) if isinstance(l, float) and l > 0]
-        if valid_pairs:
-            s, l = zip(*valid_pairs)
-            ax2.plot(s, l, label=label, marker="o", markersize=3)
+        steps, losses = get_metric_pairs(metrics, "step", "val/loss")
+        if steps:
+            ax2.plot(steps, losses, label=name, color=color, marker="o",
+                     markersize=4, linewidth=1.5)
+            has_val = True
 
-    ax1.set_xlabel("Step")
-    ax1.set_ylabel("Training Loss")
-    ax1.set_title("Training Loss Curves")
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
+    for ax, title in [(ax1, "Training Loss"), (ax2, "Validation Loss")]:
+        ax.set_xlabel("Step")
+        ax.set_ylabel("Loss")
+        ax.set_title(title)
+        ax.legend(fontsize=9)
+        ax.grid(True, alpha=0.3)
 
-    ax2.set_xlabel("Step")
-    ax2.set_ylabel("Validation Loss")
-    ax2.set_title("Validation Loss Curves")
-    ax2.legend()
-    ax2.grid(True, alpha=0.3)
+    if not has_val:
+        ax2.text(0.5, 0.5, "No validation data found",
+                 transform=ax2.transAxes, ha="center", va="center", fontsize=12, color="gray")
 
     plt.tight_layout()
     plt.savefig(output_path, dpi=150, bbox_inches="tight")
-    print(f"Saved loss curves to {output_path}")
+    plt.close()
+    print(f"  Saved: {output_path}")
 
 
-def ablation_summary_table(exp_dirs: List[str], labels: List[str]) -> str:
-    """Generate a markdown table comparing final metrics across ablations."""
+def build_summary(base_dir: Path) -> List[Dict]:
+    """Build ranked summary for all experiments."""
     rows = []
-    for exp_dir, label in zip(exp_dirs, labels):
-        metrics = load_metrics(exp_dir)
+    for exp_path in sorted(base_dir.iterdir()):
+        if not exp_path.is_dir():
+            continue
+        metrics = load_metrics(str(exp_path))
         if not metrics:
             continue
 
-        # Get final values
         train_losses = [l for l in metrics.get("train/loss", []) if isinstance(l, float)]
         val_losses = [l for l in metrics.get("val/loss", []) if isinstance(l, float)]
         throughputs = [t for t in metrics.get("perf/tokens_per_sec", []) if isinstance(t, float)]
+        steps = [s for s in metrics.get("step", []) if isinstance(s, float)]
 
         rows.append({
-            "Experiment": label,
-            "Final Train Loss": f"{train_losses[-1]:.4f}" if train_losses else "N/A",
-            "Best Val Loss": f"{min(val_losses):.4f}" if val_losses else "N/A",
-            "Avg Throughput (tok/s)": f"{np.mean(throughputs):,.0f}" if throughputs else "N/A",
+            "name": exp_path.name,
+            "final_train_loss": train_losses[-1] if train_losses else float("inf"),
+            "best_val_loss": min(val_losses) if val_losses else float("inf"),
+            "best_val_ppl": math.exp(min(val_losses)) if val_losses else float("inf"),
+            "avg_throughput": np.mean(throughputs) if throughputs else 0,
+            "total_steps": int(max(steps)) if steps else 0,
         })
+    return rows
 
-    if not rows:
-        return "No data found."
 
-    # Build markdown table
-    headers = list(rows[0].keys())
-    lines = []
-    lines.append("| " + " | ".join(headers) + " |")
-    lines.append("| " + " | ".join(["---"] * len(headers)) + " |")
-    for row in rows:
-        lines.append("| " + " | ".join(row[h] for h in headers) + " |")
+def print_ranked_table(rows: List[Dict]):
+    """Print a ranked markdown table sorted by best val loss."""
+    rows = sorted(rows, key=lambda r: r["best_val_loss"])
 
-    table = "\n".join(lines)
-    print(table)
-    return table
+    print(f"\n{'Rank':<5} {'Experiment':<25} {'Best Val Loss':<15} {'Val PPL':<12} "
+          f"{'Final Train Loss':<18} {'Throughput (tok/s)':<20} {'Steps':<8}")
+    print("-" * 105)
+
+    for i, r in enumerate(rows, 1):
+        val_loss = f"{r['best_val_loss']:.4f}" if r['best_val_loss'] < float("inf") else "N/A"
+        val_ppl = f"{r['best_val_ppl']:.2f}" if r['best_val_ppl'] < float("inf") else "N/A"
+        train_loss = f"{r['final_train_loss']:.4f}" if r['final_train_loss'] < float("inf") else "N/A"
+        throughput = f"{r['avg_throughput']:,.0f}" if r['avg_throughput'] > 0 else "N/A"
+        print(f"{i:<5} {r['name']:<25} {val_loss:<15} {val_ppl:<12} "
+              f"{train_loss:<18} {throughput:<20} {r['total_steps']:<8}")
+
+
+def print_suite_winners(rows: List[Dict]):
+    """Print the winner of each ablation suite."""
+    print(f"\n{'='*60}")
+    print("ABLATION WINNERS (by best validation loss)")
+    print(f"{'='*60}\n")
+
+    for suite_name, exp_names in SUITES.items():
+        suite_rows = [r for r in rows if r["name"] in exp_names]
+        if not suite_rows:
+            continue
+        suite_rows.sort(key=lambda r: r["best_val_loss"])
+        winner = suite_rows[0]
+        worst = suite_rows[-1]
+
+        print(f"  {suite_name}:")
+        print(f"    Winner: {winner['name']:<25} (val loss: {winner['best_val_loss']:.4f})")
+        if len(suite_rows) > 1:
+            gap = worst["best_val_loss"] - winner["best_val_loss"]
+            print(f"    Worst:  {worst['name']:<25} (val loss: {worst['best_val_loss']:.4f})")
+            print(f"    Gap:    {gap:.4f}")
+        print()
+
+
+def save_markdown_report(rows: List[Dict], base_dir: Path):
+    """Save a markdown report for the write-up."""
+    rows_sorted = sorted(rows, key=lambda r: r["best_val_loss"])
+    lines = ["# Ablation Study Results\n"]
+
+    # Overall ranking
+    lines.append("## Overall Ranking (by best validation loss)\n")
+    lines.append("| Rank | Experiment | Best Val Loss | Val PPL | Final Train Loss | Throughput |")
+    lines.append("|------|-----------|--------------|---------|-----------------|------------|")
+    for i, r in enumerate(rows_sorted, 1):
+        val = f"{r['best_val_loss']:.4f}" if r['best_val_loss'] < float("inf") else "N/A"
+        ppl = f"{r['best_val_ppl']:.2f}" if r['best_val_ppl'] < float("inf") else "N/A"
+        train = f"{r['final_train_loss']:.4f}" if r['final_train_loss'] < float("inf") else "N/A"
+        tput = f"{r['avg_throughput']:,.0f}" if r['avg_throughput'] > 0 else "N/A"
+        lines.append(f"| {i} | {r['name']} | {val} | {ppl} | {train} | {tput} |")
+
+    # Per-suite winners
+    lines.append("\n## Suite Winners\n")
+    for suite_name, exp_names in SUITES.items():
+        suite_rows = [r for r in rows_sorted if r["name"] in exp_names]
+        if not suite_rows:
+            continue
+        winner = suite_rows[0]
+        lines.append(f"- **{suite_name}**: `{winner['name']}` (val loss: {winner['best_val_loss']:.4f})")
+
+    report_path = base_dir / "ablation_report.md"
+    report_path.write_text("\n".join(lines))
+    print(f"\nSaved report: {report_path}")
 
 
 if __name__ == "__main__":
@@ -121,15 +213,29 @@ if __name__ == "__main__":
         print(f"No experiments found at {base}")
         exit(1)
 
-    exp_dirs = sorted([str(d) for d in base.iterdir() if d.is_dir()])
-    labels = [Path(d).name for d in exp_dirs]
-
-    if not exp_dirs:
-        print("No experiment subdirectories found.")
+    # Build summary data
+    rows = build_summary(base)
+    if not rows:
+        print("No experiment data found.")
         exit(1)
 
-    print("\n=== Ablation Summary ===\n")
-    ablation_summary_table(exp_dirs, labels)
+    # Print ranked table
+    print("\n=== FULL RANKING ===")
+    print_ranked_table(rows)
 
-    print("\n=== Generating Loss Curves ===\n")
-    plot_loss_curves(exp_dirs, labels, str(base / "loss_curves.png"))
+    # Print per-suite winners
+    print_suite_winners(rows)
+
+    # Generate per-suite plots
+    print("=== Generating Per-Suite Plots ===\n")
+    plots_dir = base / "plots"
+    plots_dir.mkdir(exist_ok=True)
+
+    for suite_name, exp_names in SUITES.items():
+        available = [n for n in exp_names if (base / n).is_dir()]
+        if available:
+            safe_name = suite_name.lower().replace(" ", "_")
+            plot_suite(suite_name, available, base, plots_dir / f"{safe_name}.png")
+
+    # Save markdown report
+    save_markdown_report(rows, base)
