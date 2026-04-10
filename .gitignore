@@ -19,6 +19,9 @@ data/raw/
 
 # Model checkpoints
 experiments/
+!experiments/plots/
+!experiments/plots/**
+!experiments/ablation_report.md
 *.pt
 *.pth
 
