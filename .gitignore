@@ -17,10 +17,9 @@ data/processed/
 data/raw/
 *.bin
 
-# Model checkpoints
-experiments/
+# Model checkpoints — ignore contents of experiments/ but allow plots + report
+experiments/*
 !experiments/plots/
-!experiments/plots/**
 !experiments/ablation_report.md
 *.pt
 *.pth
