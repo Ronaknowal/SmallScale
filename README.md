@@ -112,7 +112,7 @@ uv sync
 # 1. Prepare data (downloads FineWeb-Edu, trains BPE tokenizer, tokenizes to binary)
 python -m data.prepare --output_dir ./data/processed --num_tokens 500000000
 
-# 2. Train base model (25K steps, ~15 hrs on A40)
+# 2. Train base model (configured for 50K steps; the reported run was stopped at ~25K, ~16 hrs on A40)
 python train.py --config configs/base.yaml
 
 # 3. Run all 21 ablation experiments (10K steps each)
@@ -151,7 +151,7 @@ python train.py --config configs/base.yaml \
 
 | Setting | Base Model | Ablation Runs |
 |---------|-----------|---------------|
-| Steps | 50,000 | 10,000 |
+| Steps | 25,340 completed (50,000 configured) | 10,000 |
 | Effective batch | 128 (32 x 4 accum) | 128 (64 x 2 accum) |
 | Tokens/step | 131,072 | 131,072 |
 | LR schedule | Cosine decay | Cosine decay |
@@ -206,4 +206,10 @@ Each ablation changes exactly one variable from the base config, enabling clean 
 Base: RoPE + MHA + SwiGLU + Pre-norm RMSNorm + warmup=500 + lr=3e-4
 ```
 
-Screening runs use 10K steps (enough to observe relative ranking between configs). The `run_ablations.py` orchestrator manages all 21 experiments with `--resume` support for fault tolerance.
+Screening runs use 10K steps (enough to observe relative ranking between configs). All plots and tables in this README are from these 10K-step runs; the base model is a separate, longer run and is not part of the ranking.
+
+### Caveats
+
+- Rankings use final **training** loss from a single seed per config.
+- 10K steps at 131,072 tokens/step is about 2.6 passes over the 495M training tokens; the small drops in the loss curves near steps 3,800 and 7,600 are epoch boundaries.
+- Six experiments share the exact base configuration (`pos_rope`, `attn_mha`, `act_swiglu`, `norm_pre_rmsnorm`, `warmup_500`, `lr_3e4`) and finish within 0.002 loss of each other, which gives a rough run-to-run noise floor for reading the gaps above. The `run_ablations.py` orchestrator manages all 21 experiments with `--resume` support for fault tolerance.
