@@ -4,16 +4,18 @@ A from-scratch implementation of transformer language model training with system
 
 ## Key Findings
 
-Each ablation isolates exactly one variable from the base config. Ranked by final training loss at 10K steps on 500M tokens of FineWeb-Edu:
+Each ablation isolates exactly one variable from the base config. Ranked by validation loss at 10K steps on 500M tokens of FineWeb-Edu (5M-token held-out split):
 
 | Ablation | Winner | Runner-up | Gap |
 |----------|--------|-----------|-----|
-| Positional Encoding | ALiBi (3.238) | RoPE (3.266) | 0.028 |
-| Attention Mechanism | MHA (3.267) | GQA-4 (3.299) | 0.032 |
-| Activation Function | SwiGLU (3.267) | GELU (3.307) | 0.040 |
-| Normalization | Pre-norm + LayerNorm (3.266) | Post-norm + RMSNorm (3.305) | 0.039 |
-| Warmup Steps | 1000 steps (3.265) | 100 steps (3.273) | 0.008 |
-| Learning Rate | 1e-3 (3.157) | 3e-4 (3.267) | 0.110 |
+| Positional Encoding | ALiBi (3.339) | RoPE (3.360) | 0.021 |
+| Attention Mechanism | MHA (3.360) | GQA-4 (3.387) | 0.027 |
+| Activation Function | SwiGLU (3.361) | GELU (3.398) | 0.038 |
+| Normalization | Pre-norm + LayerNorm (3.360) | Pre-norm + RMSNorm (3.361) | 0.001 |
+| Warmup Steps | 1000 steps (3.357) | 2000 steps (3.358) | 0.001 |
+| Learning Rate | 1e-3 (3.265) | 6e-4 (3.292) | 0.028 |
+
+Training loss gives the same winner in every suite. Normalization and warmup gaps are within run-to-run noise (see Caveats); post-norm variants trail pre-norm by about 0.036.
 
 ### Recommended Best Stack
 
@@ -165,31 +167,31 @@ python train.py --config configs/base.yaml \
 - Base model: NVIDIA A40 (48GB)
 - Ablation runs: NVIDIA H100 (80GB)
 
-## Full Ranking (all 21 experiments)
+## Full Ranking (all 21 experiments, by validation loss)
 
-| Rank | Experiment | Final Train Loss | Train PPL | Throughput (tok/s) |
-|------|-----------|-----------------|-----------|-------------------|
-| 1 | lr_1e3 | 3.1565 | 23.49 | 430,307 |
-| 2 | lr_6e4 | 3.1879 | 24.24 | 425,904 |
-| 3 | pos_alibi | 3.2380 | 25.48 | 306,989 |
-| 4 | warmup_1000 | 3.2645 | 26.17 | 430,293 |
-| 5 | norm_pre_layernorm | 3.2659 | 26.20 | 423,116 |
-| 6 | pos_rope | 3.2660 | 26.21 | 428,814 |
-| 7 | norm_pre_rmsnorm | 3.2668 | 26.23 | 428,509 |
-| 8 | attn_mha | 3.2670 | 26.23 | 431,290 |
-| 9 | lr_3e4 | 3.2670 | 26.23 | 430,106 |
-| 10 | act_swiglu | 3.2671 | 26.24 | 429,781 |
-| 11 | warmup_2000 | 3.2681 | 26.26 | 431,477 |
-| 12 | warmup_500 | 3.2682 | 26.26 | 430,864 |
-| 13 | warmup_100 | 3.2725 | 26.38 | 430,505 |
-| 14 | attn_gqa4 | 3.2985 | 27.07 | 439,999 |
-| 15 | pos_learned | 3.3001 | 27.12 | 457,796 |
-| 16 | norm_post_layernorm | 3.3043 | 27.23 | 422,560 |
-| 17 | norm_post_rmsnorm | 3.3045 | 27.23 | 423,272 |
-| 18 | act_gelu | 3.3068 | 27.30 | 476,751 |
-| 19 | attn_gqa2 | 3.3109 | 27.41 | 447,290 |
-| 20 | attn_mqa | 3.3113 | 27.42 | 441,266 |
-| 21 | lr_1e4 | 3.4964 | 33.00 | 429,854 |
+| Rank | Experiment | Val Loss | Val PPL | Final Train Loss | Throughput (tok/s) |
+|------|-----------|----------|---------|-----------------|-------------------|
+| 1 | lr_1e3 | 3.2645 | 26.17 | 3.1565 | 430,307 |
+| 2 | lr_6e4 | 3.2920 | 26.90 | 3.1879 | 425,904 |
+| 3 | pos_alibi | 3.3390 | 28.19 | 3.2380 | 306,989 |
+| 4 | warmup_1000 | 3.3573 | 28.71 | 3.2645 | 430,293 |
+| 5 | warmup_2000 | 3.3578 | 28.73 | 3.2681 | 431,477 |
+| 6 | pos_rope | 3.3597 | 28.78 | 3.2660 | 428,814 |
+| 7 | norm_pre_layernorm | 3.3601 | 28.79 | 3.2659 | 423,116 |
+| 8 | attn_mha | 3.3603 | 28.80 | 3.2670 | 431,290 |
+| 9 | norm_pre_rmsnorm | 3.3606 | 28.81 | 3.2668 | 428,509 |
+| 10 | act_swiglu | 3.3608 | 28.81 | 3.2671 | 429,781 |
+| 11 | lr_3e4 | 3.3611 | 28.82 | 3.2670 | 430,106 |
+| 12 | warmup_500 | 3.3611 | 28.82 | 3.2682 | 430,864 |
+| 13 | warmup_100 | 3.3666 | 28.98 | 3.2725 | 430,505 |
+| 14 | attn_gqa4 | 3.3870 | 29.58 | 3.2985 | 439,999 |
+| 15 | attn_gqa2 | 3.3958 | 29.84 | 3.3109 | 447,290 |
+| 16 | norm_post_rmsnorm | 3.3959 | 29.84 | 3.3045 | 423,272 |
+| 17 | norm_post_layernorm | 3.3965 | 29.86 | 3.3043 | 422,560 |
+| 18 | act_gelu | 3.3983 | 29.91 | 3.3068 | 476,751 |
+| 19 | attn_mqa | 3.4115 | 30.31 | 3.3113 | 441,266 |
+| 20 | pos_learned | 3.4182 | 30.51 | 3.3001 | 457,796 |
+| 21 | lr_1e4 | 3.5666 | 35.40 | 3.4964 | 429,854 |
 
 ## Data Pipeline
 
@@ -210,6 +212,6 @@ Screening runs use 10K steps (enough to observe relative ranking between configs
 
 ### Caveats
 
-- Rankings use final **training** loss from a single seed per config.
+- Rankings use validation loss from a single seed per config. Validation loss is read from each run's checkpoint (`best_val_loss`); the loss curves above show training loss.
 - 10K steps at 131,072 tokens/step is about 2.6 passes over the 495M training tokens; the small drops in the loss curves near steps 3,800 and 7,600 are epoch boundaries.
-- Six experiments share the exact base configuration (`pos_rope`, `attn_mha`, `act_swiglu`, `norm_pre_rmsnorm`, `warmup_500`, `lr_3e4`) and finish within 0.002 loss of each other, which gives a rough run-to-run noise floor for reading the gaps above. The `run_ablations.py` orchestrator manages all 21 experiments with `--resume` support for fault tolerance.
+- Six experiments share the exact base configuration (`pos_rope`, `attn_mha`, `act_swiglu`, `norm_pre_rmsnorm`, `warmup_500`, `lr_3e4`) and finish within 0.002 validation loss of each other, which gives a rough run-to-run noise floor for reading the gaps above. The `run_ablations.py` orchestrator manages all 21 experiments with `--resume` support for fault tolerance.

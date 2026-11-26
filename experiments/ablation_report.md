@@ -1,5 +1,7 @@
 # Ablation Study Results
 
+> This report ranks by final training loss. Validation-loss rankings (same winners in every suite) are in the README.
+
 ## Overall Ranking (by final train loss)
 
 | Rank | Experiment | Final Train Loss | Train PPL | Throughput |
